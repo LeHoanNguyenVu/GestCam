@@ -9,5 +9,18 @@ target_link_libraries(test_smoke PRIVATE
     ${MF_LIBRARIES}
 )
 
+add_executable(test_camera test_camera.cpp)
+
+target_include_directories(test_camera PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+)
+
+target_link_libraries(test_camera PRIVATE
+    gestcam_lib
+    GTest::gtest_main
+    ${MF_LIBRARIES}
+)
+
 include(GoogleTest)
 gtest_discover_tests(test_smoke)
+gtest_discover_tests(test_camera)

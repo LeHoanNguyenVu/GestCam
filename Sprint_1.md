@@ -60,7 +60,7 @@ DACL: Low-Integrity Chrome Aware"]
 - [x] **Task 1.1: Khởi tạo Project & Cấu hình Build System**
   - Tạo cấu trúc thư mục chuẩn: `/src`, `/include`, `/libs`, `/driver`.
   - Viết `CMakeLists.txt` C++20, cấu hình compiler flags: `/O2`, `/arch:AVX2`, `/std:c++20`, link Windows SDK Media Foundation libraries.
-- [ ] **Task 1.2: Xây dựng Module Media Foundation Capture**
+- [x] **Task 1.2: Xây dựng Module Media Foundation Capture**
   - Hiện thực `CameraEnumerator`: Liệt kê danh sách tên và SymbolicLink của webcam kết nối vào máy.
   - Hiện thực `MFCameraCapture`: Khởi tạo `IMFSourceReader`, thiết lập callback hoặc polling loop lấy mẫu frame thô.
   - Hỗ trợ format YUY2, NV12 và giải mã MJPEG.

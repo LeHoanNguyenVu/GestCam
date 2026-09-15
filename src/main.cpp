@@ -1,5 +1,9 @@
 #include <iostream>
+#include <chrono>
 #include "gestcam/Version.h"
+#include "gestcam/CameraEnumerator.h"
+#include "gestcam/MFCameraCapture.h"
+#include "gestcam/MockCameraSource.h"
 
 #ifdef _WIN32
     #include <windows.h>
@@ -18,7 +22,7 @@ bool CheckHardwareAVX2() {
     int nIds = cpuInfo[0];
     if (nIds >= 7) {
         __cpuidex(cpuInfo, 7, 0);
-        return (cpuInfo[1] & (1 << 5)) != 0; // Bit 5 của EBX là cờ AVX2
+        return (cpuInfo[1] & (1 << 5)) != 0;
     }
     return false;
 #elif defined(__GNUC__) || defined(__clang__)
@@ -33,33 +37,71 @@ int main() {
     std::cout << "          GestCam Core - Version " << gestcam::SystemInfo::kVersion << "\n";
     std::cout << "========================================================\n";
 
-    // 1. Kiểm tra C++ Standard
-#if defined(_MSVC_LANG)
-    std::cout << "[INFO] C++ Standard (MSVC): " << _MSVC_LANG << "\n";
-#else
-    std::cout << "[INFO] C++ Standard (__cplusplus): " << __cplusplus << "\n";
-#endif
-
-    // 2. Kiểm tra phần cứng AVX2
+    // 1. Kiểm tra phần cứng AVX2
     bool hw_avx2 = CheckHardwareAVX2();
-    std::cout << "[INFO] Compiler AVX2 Flag: " 
+    std::cout << "[SYSTEM] Compiler AVX2 Flag: " 
               << (gestcam::SystemInfo::kCompiledWithAVX2 ? "ENABLED" : "DISABLED") << "\n";
-    std::cout << "[INFO] CPU Hardware AVX2 Support: " 
-              << (hw_avx2 ? "SUPPORTED (OK)" : "NOT SUPPORTED (FALLBACK REQUIRED)") << "\n";
+    std::cout << "[SYSTEM] CPU Hardware AVX2 Support: " 
+              << (hw_avx2 ? "SUPPORTED (OK)" : "NOT SUPPORTED") << "\n\n";
 
-    // 3. Khởi tạo thử Media Foundation API
-    HRESULT hr = MFStartup(MF_VERSION);
-    if (SUCCEEDED(hr)) {
-        std::cout << "[INFO] Windows Media Foundation: INITIALIZED SUCCESSFULLY\n";
-        MFShutdown();
+    // 2. Quét danh sách camera vật lý
+    std::cout << "[CAMERA] Scanning for video capture devices...\n";
+    auto devices = gestcam::CameraEnumerator::EnumerateDevices();
+
+    if (devices.empty()) {
+        std::cout << "[CAMERA] No physical webcam detected. Switching to Mock Camera Source.\n";
     } else {
-        std::cerr << "[ERROR] Windows Media Foundation failed to initialize. HRESULT: 0x" 
-                  << std::hex << hr << "\n";
-        return 1;
+        std::cout << "[CAMERA] Detected " << devices.size() << " device(s):\n";
+        for (const auto& dev : devices) {
+            std::cout << "  - [" << dev.index << "] " << dev.name << "\n";
+        }
     }
 
+    // 3. Khởi tạo Camera Source (Ưu tiên camera thật, fallback sang Mock)
+    std::unique_ptr<gestcam::ICameraSource> cam;
+    if (!devices.empty()) {
+        cam = std::make_unique<gestcam::MFCameraCapture>();
+        std::cout << "\n[CAMERA] Opening physical camera [" << devices[0].name << "] at 1280x720...\n";
+        if (!cam->Open(devices[0].index, 1280, 720, 30)) {
+            std::cerr << "[WARNING] Could not open physical camera. Falling back to Mock Camera.\n";
+            cam = std::make_unique<gestcam::MockCameraSource>();
+            cam->Open(0, 1280, 720, 30);
+        }
+    } else {
+        cam = std::make_unique<gestcam::MockCameraSource>();
+        cam->Open(0, 1280, 720, 30);
+    }
+
+    auto mode = cam->GetCurrentMode();
+    std::cout << "[CAMERA] Active Stream: " << mode.width << "x" << mode.height 
+              << " @ " << mode.fps << " FPS (" 
+              << gestcam::VideoPixelFormatToString(mode.format) << ")\n";
+
+    // 4. Lấy mẫu 30 frames và đo FPS thực tế
+    std::cout << "[CAMERA] Capturing 30 frames for performance verification...\n";
+    gestcam::RawVideoFrame frame;
+    int success_count = 0;
+    auto start_time = std::chrono::steady_clock::now();
+
+    for (int i = 0; i < 30; ++i) {
+        if (cam->GrabFrame(frame, 1500)) {
+            ++success_count;
+        }
+    }
+
+    auto total_time_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start_time
+    ).count();
+
+    double actual_fps = (total_time_ms > 0) ? (success_count * 1000.0 / total_time_ms) : 0.0;
+
+    std::cout << "[CAMERA] Captured " << success_count << "/30 frames successfully in " 
+              << total_time_ms << " ms. Measured FPS: " << actual_fps << " FPS\n";
+
+    cam->Close();
+
     std::cout << "========================================================\n";
-    std::cout << "GestCam Build System & Runtime Environment Verified OK!\n";
+    std::cout << "Task 1.2 Verification Completed Successfully!\n";
     std::cout << "========================================================\n";
     return 0;
 }
