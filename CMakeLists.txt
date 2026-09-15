@@ -8,11 +8,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Tối ưu hóa Compiler Flags và AVX2
 if(MSVC)
     add_compile_options(/O2 /arch:AVX2 /W4 /permissive- /utf-8)
-    set(MF_LIBRARIES mf mfplat mfreadwrite mfuuid ole32 oleaut32)
+    set(MF_LIBRARIES mf mfplat mfreadwrite mfuuid ole32 oleaut32 advapi32)
 else()
     add_compile_options(-O3 -mavx2 -Wall -Wextra)
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static -static-libgcc -static-libstdc++")
-    set(MF_LIBRARIES -lmf -lmfplat -lmfreadwrite -lmfuuid -lstrmiids -lole32 -loleaut32 -luuid)
+    set(MF_LIBRARIES -lmf -lmfplat -lmfreadwrite -lmfuuid -lstrmiids -lole32 -loleaut32 -luuid -ladvapi32)
 endif()
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -23,6 +23,8 @@ add_library(gestcam_lib STATIC
     src/MFCameraCapture.cpp
     src/MockCameraSource.cpp
     src/ColorConverter.cpp
+    src/SharedMemoryProducer.cpp
+    src/SharedMemoryConsumer.cpp
 )
 
 target_link_libraries(gestcam_lib PUBLIC

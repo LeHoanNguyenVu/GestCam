@@ -9,6 +9,7 @@
 #include "gestcam/MockCameraSource.h"
 #include "gestcam/ColorConverter.h"
 #include "gestcam/SPSCQueue.h"
+#include "gestcam/SharedMemoryProducer.h"
 
 #ifdef _WIN32
     #include <windows.h>
@@ -77,21 +78,31 @@ int main() {
               << " @ " << mode.fps << " FPS (" 
               << gestcam::VideoPixelFormatToString(mode.format) << ")\n";
 
-    // 3. Khởi tạo SPSC Lock-Free Ring Buffer (Capacity = 4)
+    // 3. Khởi tạo SPSC Lock-Free Ring Buffer và Shared Memory Producer
     gestcam::SPSCQueue<gestcam::RawVideoFrame, 4> frame_queue;
+    gestcam::SharedMemoryProducer shm_producer;
+    if (!shm_producer.Initialize()) {
+        std::cerr << "[ERROR] Failed to initialize Shared Memory Producer!\n";
+        return 1;
+    }
+    std::cout << "[IPC] Shared Memory Producer initialized at '" 
+              << "Local\\GestCam_SharedBuffer" << "' (Low-Integrity DACL OK)\n";
+
     std::atomic<bool> is_running{true};
     const int total_frames_to_test = 30;
 
     std::vector<double> conversion_times_us;
     conversion_times_us.reserve(total_frames_to_test);
+    std::vector<double> shm_write_times_us;
+    shm_write_times_us.reserve(total_frames_to_test);
 
-    std::cout << "\n[PIPELINE] Launching Producer & Consumer threads (SPSC Queue + SIMD AVX2)...\n";
+    std::cout << "\n[PIPELINE] Launching Producer & Consumer threads (SPSC Queue + SIMD AVX2 + IPC)...\n";
 
-    // Thread 1: Consumer rút frame từ Queue và chạy giải mã SIMD sang RGB24
+    // Thread 1: Consumer rút frame từ Queue -> SIMD AVX2 -> ghi vào Shared Memory
     std::thread consumer_thread([&]() {
         gestcam::RawVideoFrame raw_frame;
         std::vector<uint8_t> rgb_buffer;
-        int processed = 0;
+        uint64_t processed = 0;
 
         while (is_running.load(std::memory_order_relaxed) || !frame_queue.Empty()) {
             if (frame_queue.TryPop(raw_frame)) {
@@ -102,7 +113,13 @@ int main() {
                 if (ok) {
                     double us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
                     conversion_times_us.push_back(us);
-                    ++processed;
+
+                    // Ghi frame vào Shared Memory (Triple-Buffering)
+                    auto tw0 = std::chrono::steady_clock::now();
+                    shm_producer.WriteFrame(rgb_buffer.data(), ++processed, raw_frame.timestamp_us);
+                    auto tw1 = std::chrono::steady_clock::now();
+                    double w_us = std::chrono::duration_cast<std::chrono::microseconds>(tw1 - tw0).count();
+                    shm_write_times_us.push_back(w_us);
                 }
             } else {
                 std::this_thread::yield();
@@ -131,6 +148,7 @@ int main() {
     ).count();
 
     cam->Close();
+    shm_producer.Close();
 
     // 4. Báo cáo đo kiểm hiệu năng
     double actual_fps = (total_ms > 0) ? (total_frames_to_test * 1000.0 / total_ms) : 0.0;
@@ -139,15 +157,22 @@ int main() {
         double sum = std::accumulate(conversion_times_us.begin(), conversion_times_us.end(), 0.0);
         avg_conv_us = sum / conversion_times_us.size();
     }
+    double avg_shm_us = 0.0;
+    if (!shm_write_times_us.empty()) {
+        double sum = std::accumulate(shm_write_times_us.begin(), shm_write_times_us.end(), 0.0);
+        avg_shm_us = sum / shm_write_times_us.size();
+    }
 
     std::cout << "\n[RESULT] Processed " << conversion_times_us.size() << "/" << total_frames_to_test 
-              << " frames through SPSC Queue & SIMD AVX2 in " << total_ms << " ms.\n";
+              << " frames through SPSC Queue -> SIMD AVX2 -> Shared Memory in " << total_ms << " ms.\n";
     std::cout << "[PERF] Camera Capture Speed: " << actual_fps << " FPS\n";
     std::cout << "[PERF] Average SIMD NV12->RGB24 Conversion Time: " 
               << (avg_conv_us / 1000.0) << " ms (" << avg_conv_us << " us)\n";
+    std::cout << "[PERF] Average Shared Memory Write Latency: " 
+              << (avg_shm_us / 1000.0) << " ms (" << avg_shm_us << " us)\n";
 
     std::cout << "========================================================\n";
-    std::cout << "Task 1.3 Verification Completed Successfully!\n";
+    std::cout << "Task 1.4 Verification Completed Successfully!\n";
     std::cout << "========================================================\n";
     return 0;
 }
