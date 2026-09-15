@@ -72,7 +72,7 @@ DACL: Low-Integrity Chrome Aware"]
     - Gọi `ConvertStringSecurityDescriptorToSecurityDescriptorW` tạo Security Descriptor.
     - Gọi `CreateFileMappingW` và `MapViewOfFile` với kích thước struct `SharedMemoryState`.
   - Hàm `WriteFrame(const uint8_t* rgb_data)`: Chọn slot trống, memcpy dữ liệu, thực hiện atomic store `ready_slot_idx`.
-- [ ] **Task 1.5: Biên dịch & Tinh chỉnh Driver DLL (IPC Consumer)**
+- [x] **Task 1.5: Biên dịch & Tinh chỉnh Driver DLL (IPC Consumer)**
   - Tích hợp mã nguồn DirectShow Filter từ OBS VirtualCam module.
   - Cập nhật hàm `FillBuffer` trong Filter Pin: Đọc từ `SharedMemoryState` thay vì OBS memory cũ.
   - Thêm fallback frame mặc định khi chưa có tín hiệu từ Core.

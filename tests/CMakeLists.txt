@@ -45,8 +45,36 @@ target_link_libraries(test_ipc PRIVATE
     ${MF_LIBRARIES}
 )
 
+add_executable(test_virtualcam
+    test_virtualcam.cpp
+    ${PROJECT_SOURCE_DIR}/driver/GestCamFilter.cpp
+    ${PROJECT_SOURCE_DIR}/driver/GestCamStream.cpp
+    ${PROJECT_SOURCE_DIR}/driver/FallbackFrame.cpp
+)
+
+target_include_directories(test_virtualcam PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}
+)
+
+target_link_libraries(test_virtualcam PRIVATE
+    gestcam_lib
+    GTest::gtest_main
+    ${MF_LIBRARIES}
+    -lgdi32 -lwinmm
+)
+
+add_dependencies(test_virtualcam gestcam-virtualcam)
+
+add_custom_command(TARGET test_virtualcam POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    $<TARGET_FILE:gestcam-virtualcam>
+    $<TARGET_FILE_DIR:test_virtualcam>
+)
+
 include(GoogleTest)
 gtest_discover_tests(test_smoke)
 gtest_discover_tests(test_camera)
 gtest_discover_tests(test_color_ringbuffer)
 gtest_discover_tests(test_ipc)
+gtest_discover_tests(test_virtualcam)
