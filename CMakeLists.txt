@@ -22,6 +22,7 @@ add_library(gestcam_lib STATIC
     src/CameraEnumerator.cpp
     src/MFCameraCapture.cpp
     src/MockCameraSource.cpp
+    src/ColorConverter.cpp
 )
 
 target_link_libraries(gestcam_lib PUBLIC

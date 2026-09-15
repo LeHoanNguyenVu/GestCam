@@ -64,7 +64,7 @@ DACL: Low-Integrity Chrome Aware"]
   - Hiện thực `CameraEnumerator`: Liệt kê danh sách tên và SymbolicLink của webcam kết nối vào máy.
   - Hiện thực `MFCameraCapture`: Khởi tạo `IMFSourceReader`, thiết lập callback hoặc polling loop lấy mẫu frame thô.
   - Hỗ trợ format YUY2, NV12 và giải mã MJPEG.
-- [ ] **Task 1.3: Hiện thực Chuyển đổi Color Space SIMD & SPSC Ring Buffer**
+- [x] **Task 1.3: Hiện thực Chuyển đổi Color Space SIMD & SPSC Ring Buffer**
   - Viết hàm `YUY2_to_RGB24_AVX2()` và `NV12_to_RGB24_AVX2()`.
   - Cài đặt `SPSCQueue<FrameData, 4>` không khóa bằng `std::atomic<size_t>`.
 - [ ] **Task 1.4: Xây dựng Module Shared Memory Lock-Free (IPC Producer)**
