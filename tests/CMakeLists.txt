@@ -72,9 +72,34 @@ add_custom_command(TARGET test_virtualcam POST_BUILD
     $<TARGET_FILE_DIR:test_virtualcam>
 )
 
+add_executable(test_onnx_directml test_onnx_directml.cpp)
+
+target_include_directories(test_onnx_directml PRIVATE
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_SOURCE_DIR}/third_party/onnxruntime/include
+)
+
+target_link_libraries(test_onnx_directml PRIVATE
+    gestcam_lib
+    GTest::gtest_main
+    ${MF_LIBRARIES}
+    onnxruntime
+    DirectML
+)
+
+add_custom_command(TARGET test_onnx_directml POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${PROJECT_SOURCE_DIR}/third_party/onnxruntime/bin/onnxruntime.dll
+    $<TARGET_FILE_DIR:test_onnx_directml>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${PROJECT_SOURCE_DIR}/third_party/onnxruntime/bin/DirectML.dll
+    $<TARGET_FILE_DIR:test_onnx_directml>
+)
+
 include(GoogleTest)
 gtest_discover_tests(test_smoke)
 gtest_discover_tests(test_camera)
 gtest_discover_tests(test_color_ringbuffer)
 gtest_discover_tests(test_ipc)
 gtest_discover_tests(test_virtualcam)
+gtest_discover_tests(test_onnx_directml)

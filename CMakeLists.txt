@@ -15,7 +15,16 @@ else()
     set(MF_LIBRARIES -lmf -lmfplat -lmfreadwrite -lmfuuid -lstrmiids -lole32 -loleaut32 -luuid -ladvapi32)
 endif()
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
+set(ONNXRUNTIME_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime)
+
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${ONNXRUNTIME_DIR}/include
+)
+
+link_directories(
+    ${ONNXRUNTIME_DIR}/lib
+)
 
 # Thư viện dùng chung (Core Library)
 add_library(gestcam_lib STATIC
@@ -25,10 +34,25 @@ add_library(gestcam_lib STATIC
     src/ColorConverter.cpp
     src/SharedMemoryProducer.cpp
     src/SharedMemoryConsumer.cpp
+    src/OnnxDirectMLEngine.cpp
 )
 
 target_link_libraries(gestcam_lib PUBLIC
     ${MF_LIBRARIES}
+    onnxruntime
+    DirectML
+)
+
+# Copy ONNX Runtime & DirectML DLLs to binary directories
+file(COPY
+    ${ONNXRUNTIME_DIR}/bin/onnxruntime.dll
+    ${ONNXRUNTIME_DIR}/bin/DirectML.dll
+    DESTINATION ${CMAKE_BINARY_DIR}
+)
+file(COPY
+    ${ONNXRUNTIME_DIR}/bin/onnxruntime.dll
+    ${ONNXRUNTIME_DIR}/bin/DirectML.dll
+    DESTINATION ${CMAKE_BINARY_DIR}/tests
 )
 
 # Ứng dụng chính (Core Process CLI)
@@ -38,6 +62,15 @@ add_executable(gestcam_core
 
 target_link_libraries(gestcam_core PRIVATE
     gestcam_lib
+)
+
+add_custom_command(TARGET gestcam_core POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${ONNXRUNTIME_DIR}/bin/onnxruntime.dll
+    $<TARGET_FILE_DIR:gestcam_core>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${ONNXRUNTIME_DIR}/bin/DirectML.dll
+    $<TARGET_FILE_DIR:gestcam_core>
 )
 
 # Cấu hình Driver DLL Module

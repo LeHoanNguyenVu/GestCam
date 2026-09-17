@@ -78,9 +78,9 @@ Dựa trên 21 điểm khớp tay 3D chuẩn hóa $[0.0, 1.0]$:
   - Download pre-trained ONNX models: UltraFace-320, BlazePalm, MediaPipe Hand Landmark.
   - Sử dụng công cụ ONNX Quantization tool (`onnxruntime.quantization`) lượng tử hóa sang INT8.
   - Đảm bảo tổng dung lượng 3 file model cộng lại $\le 10\text{ MB}$. (Đã hoàn thành: 5.52 MB)
-- [ ] **Task 2.2: Xây dựng Module ONNX Runtime DirectML Wrapper**
+- [x] **Task 2.2: Xây dựng Module ONNX Runtime DirectML Wrapper**
   - Viết class `OnnxDirectMLEngine`: Quản lý `Ort::Env`, `Ort::Session`, `Ort::IoBinding`.
-  - Thiết lập cơ chế cấp phát bộ nhớ tensor cố định.
+  - Thiết lập cơ chế cấp phát bộ nhớ tensor cố định. (Đã hoàn thành: Zero-Allocation Tensor Pipeline & 6/6 tests passed)
 - [ ] **Task 2.3: Hiện thực UltraFace Detector & Tính góc nghiêng đầu**
   - Viết tiền xử lý: Resize frame từ $1280 \times 720 \to 320 \times 240$, normalize `(pixel - 127.5) / 128.0`.
   - Chạy inference, parse bounding box qua Non-Maximum Suppression (NMS).
