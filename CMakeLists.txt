@@ -36,6 +36,7 @@ add_library(gestcam_lib STATIC
     src/SharedMemoryConsumer.cpp
     src/OnnxDirectMLEngine.cpp
     src/UltraFaceDetector.cpp
+    src/HandTracker.cpp
 )
 
 target_link_libraries(gestcam_lib PUBLIC
