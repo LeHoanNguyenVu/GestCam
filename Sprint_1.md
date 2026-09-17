@@ -76,10 +76,10 @@ DACL: Low-Integrity Chrome Aware"]
   - Tích hợp mã nguồn DirectShow Filter từ OBS VirtualCam module.
   - Cập nhật hàm `FillBuffer` trong Filter Pin: Đọc từ `SharedMemoryState` thay vì OBS memory cũ.
   - Thêm fallback frame mặc định khi chưa có tín hiệu từ Core.
-- [ ] **Task 1.6: Tích hợp End-to-End & Đăng ký Registry**
+- [x] **Task 1.6: Tích hợp End-to-End & Đăng ký Registry**
   - Viết script PowerShell/Batch tự động đăng ký `regsvr32 obs-virtualcam.dll`.
   - Chạy Core Process, mở trình duyệt vào Google Meet test thiết bị camera.
-- [ ] **Task 1.7: Xây dựng Mock Camera & Automated Test Suite cho Sprint 1**
+- [x] **Task 1.7: Xây dựng Mock Camera & Automated Test Suite cho Sprint 1**
   - Tạo `MockCameraSource`: Tự động sinh test frame NV12/RGB24 chuẩn không phụ thuộc phần cứng webcam thật.
   - Viết `tests/test_sprint1_io.cpp`: Kiểm tra chuyển đổi màu SIMD AVX2 bit-exactness, stress test SPSC Ring Buffer (500,000 frames), và kiểm tra tính toàn vẹn của Shared Memory Triple-Buffering.
   - Tích hợp kịch bản kiểm thử 1-click: `powershell ./scripts/run_tests.ps1` (Xem chi tiết tại [AUTOMATION_TESTING.md](file:///d:/GestCam/AUTOMATION_TESTING.md)).

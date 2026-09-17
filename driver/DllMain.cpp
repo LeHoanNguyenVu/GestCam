@@ -1,9 +1,12 @@
 #include <windows.h>
 #include <unknwn.h>
+#include <dshow.h>
+#include <strmif.h>
 #include <string>
 #include <atomic>
 #include "driver/GestCamGuids.h"
 #include "driver/GestCamFilter.h"
+
 
 static HMODULE g_hModule = nullptr;
 static std::atomic<LONG> g_lockCount{0};
@@ -115,8 +118,58 @@ extern "C" HRESULT WINAPI DllRegisterServer(void) {
     SetRegString(HKEY_CLASSES_ROOT, clsidKey + L"\\InprocServer32", L"", dllPath);
     SetRegString(HKEY_CLASSES_ROOT, clsidKey + L"\\InprocServer32", L"ThreadingModel", L"Both");
 
-    // 2. Register under DirectShow Video Input Device Category
-    // HKCR\CLSID\{860BB310-5D01-11D0-BD3B-00A0C911CE86}\Instance\{CLSID}
+    // 2. Register under DirectShow Video Input Device Category using IFilterMapper2
+    // This writes the mandatory binary 'FilterData' required by Windows Media Foundation / Chrome
+    HRESULT hrCo = CoInitialize(nullptr);
+    IFilterMapper2* pFM = nullptr;
+    HRESULT hrFM = CoCreateInstance(CLSID_FilterMapper2, nullptr, CLSCTX_INPROC_SERVER,
+                                    IID_IFilterMapper2, reinterpret_cast<void**>(&pFM));
+    if (SUCCEEDED(hrFM) && pFM) {
+        REGPINTYPES regTypes[1];
+        regTypes[0].clsMajorType = &MEDIATYPE_Video;
+        regTypes[0].clsMinorType = &MEDIASUBTYPE_RGB24;
+
+        REGFILTERPINS2 regPin;
+        ZeroMemory(&regPin, sizeof(regPin));
+        regPin.dwFlags = REG_PINFLAG_B_OUTPUT;
+        regPin.cInstances = 1;
+        regPin.nMediaTypes = 1;
+        regPin.lpMediaType = regTypes;
+        regPin.nMediums = 0;
+        regPin.lpMedium = nullptr;
+        regPin.clsPinCategory = &PIN_CATEGORY_CAPTURE_GestCam;
+
+        REGFILTER2 rf2;
+        ZeroMemory(&rf2, sizeof(rf2));
+        rf2.dwVersion = 2;
+        // MERIT_UNLIKELY allows Windows Camera Frame Server to bridge this
+        // DirectShow filter into the Media Foundation stack (required for
+        // Chrome, Edge, and Google Meet on Windows 10/11).
+        // MERIT_DO_NOT_USE would make the Frame Server skip this device.
+        rf2.dwMerit = MERIT_UNLIKELY;
+        rf2.cPins2 = 1;
+        rf2.rgPins2 = &regPin;
+
+
+        HRESULT hrRegFilter = pFM->RegisterFilter(
+            CLSID_GestCamVirtualCamera,
+            GESTCAM_VIRTUALCAM_FRIENDLY_NAME,
+            nullptr,
+            &CLSID_VideoInputDeviceCategory_GestCam,
+            GESTCAM_VIRTUALCAM_CLSID_STR,
+            &rf2
+        );
+        if (FAILED(hrRegFilter)) {
+            OutputDebugStringA("pFM->RegisterFilter FAILED!\n");
+        }
+        pFM->Release();
+    }
+
+    if (SUCCEEDED(hrCo)) {
+        CoUninitialize();
+    }
+
+    // 3. Ensure FriendlyName and CLSID are explicitly present
     std::wstring catKey = L"CLSID\\{860BB310-5D01-11D0-BD3B-00A0C911CE86}\\Instance\\" + clsidStr;
     SetRegString(HKEY_CLASSES_ROOT, catKey, L"CLSID", clsidStr);
     SetRegString(HKEY_CLASSES_ROOT, catKey, L"FriendlyName", GESTCAM_VIRTUALCAM_FRIENDLY_NAME);
@@ -125,6 +178,22 @@ extern "C" HRESULT WINAPI DllRegisterServer(void) {
 }
 
 extern "C" HRESULT WINAPI DllUnregisterServer(void) {
+    HRESULT hrCo = CoInitialize(nullptr);
+    IFilterMapper2* pFM = nullptr;
+    HRESULT hrFM = CoCreateInstance(CLSID_FilterMapper2, nullptr, CLSCTX_INPROC_SERVER,
+                                    IID_IFilterMapper2, reinterpret_cast<void**>(&pFM));
+    if (SUCCEEDED(hrFM) && pFM) {
+        pFM->UnregisterFilter(
+            &CLSID_VideoInputDeviceCategory_GestCam,
+            GESTCAM_VIRTUALCAM_CLSID_STR,
+            CLSID_GestCamVirtualCamera
+        );
+        pFM->Release();
+    }
+    if (SUCCEEDED(hrCo)) {
+        CoUninitialize();
+    }
+
     std::wstring clsidStr = GESTCAM_VIRTUALCAM_CLSID_STR;
     std::wstring catKey = L"CLSID\\{860BB310-5D01-11D0-BD3B-00A0C911CE86}\\Instance\\" + clsidStr;
     std::wstring clsidKey = L"CLSID\\" + clsidStr;
@@ -134,3 +203,4 @@ extern "C" HRESULT WINAPI DllUnregisterServer(void) {
 
     return S_OK;
 }
+

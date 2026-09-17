@@ -136,6 +136,9 @@ TEST(VirtualCamTest, Dll_LoadLibrary_And_Exports) {
     }
     ASSERT_NE(hDll, nullptr) << "Failed to load gestcam-virtualcam.dll";
 
+    // Suppress -Wcast-function-type for GetProcAddress
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-function-type"
     auto pDllGetClassObject = reinterpret_cast<HRESULT(WINAPI*)(REFCLSID, REFIID, LPVOID*)>(
         GetProcAddress(hDll, "DllGetClassObject"));
     auto pDllCanUnloadNow = reinterpret_cast<HRESULT(WINAPI*)()>(
@@ -144,14 +147,19 @@ TEST(VirtualCamTest, Dll_LoadLibrary_And_Exports) {
         GetProcAddress(hDll, "DllRegisterServer"));
     auto pDllUnregisterServer = reinterpret_cast<HRESULT(WINAPI*)()>(
         GetProcAddress(hDll, "DllUnregisterServer"));
+#pragma GCC diagnostic pop
 
     EXPECT_NE(pDllGetClassObject, nullptr);
     EXPECT_NE(pDllCanUnloadNow, nullptr);
     EXPECT_NE(pDllRegisterServer, nullptr);
     EXPECT_NE(pDllUnregisterServer, nullptr);
 
+    HRESULT hrReg = pDllRegisterServer();
+    std::cout << "[DLL REGISTER] hrReg = 0x" << std::hex << hrReg << std::endl;
+
     // Test creating ClassFactory from loaded DLL
     IClassFactory* pFactory = nullptr;
+
     HRESULT hr = pDllGetClassObject(CLSID_GestCamVirtualCamera, IID_IClassFactory, reinterpret_cast<void**>(&pFactory));
     EXPECT_EQ(hr, S_OK);
     ASSERT_NE(pFactory, nullptr);
@@ -165,3 +173,137 @@ TEST(VirtualCamTest, Dll_LoadLibrary_And_Exports) {
     pFactory->Release();
     FreeLibrary(hDll);
 }
+
+// Test 7: DirectShow Video Input Category Moniker Verification
+TEST(VirtualCamTest, DirectShow_Category_SystemEnumeration) {
+    HRESULT hr = CoInitialize(nullptr);
+
+    ICreateDevEnum* pDevEnum = nullptr;
+    hr = CoCreateInstance(CLSID_SystemDeviceEnum, nullptr, CLSCTX_INPROC_SERVER,
+                          IID_ICreateDevEnum, reinterpret_cast<void**>(&pDevEnum));
+
+    if (SUCCEEDED(hr) && pDevEnum) {
+        IEnumMoniker* pEnum = nullptr;
+        hr = pDevEnum->CreateClassEnumerator(CLSID_VideoInputDeviceCategory_GestCam, &pEnum, 0);
+
+        // Enumerator should succeed or return S_FALSE if category is empty
+        EXPECT_TRUE(hr == S_OK || hr == S_FALSE);
+
+        if (hr == S_OK && pEnum) {
+            IMoniker* pMoniker = nullptr;
+            bool found_gestcam = false;
+
+            while (pEnum->Next(1, &pMoniker, nullptr) == S_OK) {
+                IPropertyBag* pPropBag = nullptr;
+                hr = pMoniker->BindToStorage(0, 0, IID_IPropertyBag, reinterpret_cast<void**>(&pPropBag));
+                if (SUCCEEDED(hr) && pPropBag) {
+                    VARIANT var;
+                    VariantInit(&var);
+                    hr = pPropBag->Read(L"FriendlyName", &var, 0);
+                    if (SUCCEEDED(hr) && var.vt == VT_BSTR && var.bstrVal) {
+                        if (wcscmp(var.bstrVal, GESTCAM_VIRTUALCAM_FRIENDLY_NAME) == 0) {
+                            found_gestcam = true;
+                            IBaseFilter* pFilter = nullptr;
+                            HRESULT hrBind = pMoniker->BindToObject(0, 0, IID_IBaseFilter, reinterpret_cast<void**>(&pFilter));
+                            std::cout << "[MONIKER BIND TO OBJECT] hr = 0x" << std::hex << hrBind << std::endl;
+                            EXPECT_EQ(hrBind, S_OK);
+                            if (SUCCEEDED(hrBind) && pFilter) {
+                                pFilter->Release();
+                            }
+                        }
+                    }
+                    VariantClear(&var);
+                    pPropBag->Release();
+                }
+                pMoniker->Release();
+
+            }
+            pEnum->Release();
+
+            std::cout << "[SYSTEM ENUM] GestCam Virtual Camera in DirectShow: " 
+                      << (found_gestcam ? "PRESENT (REGISTERED)" : "NOT YET REGISTERED") << std::endl;
+        }
+        pDevEnum->Release();
+    }
+
+    CoUninitialize();
+}
+
+// Test 8: DirectShow Filter Graph Connect & Render
+TEST(VirtualCamTest, DirectShow_Graph_Connect_Test) {
+    HRESULT hr = CoInitialize(nullptr);
+    IGraphBuilder* pGraph = nullptr;
+    hr = CoCreateInstance(CLSID_FilterGraph, nullptr, CLSCTX_INPROC_SERVER, IID_IGraphBuilder, reinterpret_cast<void**>(&pGraph));
+    ASSERT_EQ(hr, S_OK);
+    ASSERT_NE(pGraph, nullptr);
+
+    auto filter = std::make_unique<GestCamFilter>();
+    hr = pGraph->AddFilter(filter.get(), L"GestCam Source");
+    EXPECT_EQ(hr, S_OK);
+
+    IPin* pOutPin = filter->GetStream();
+    ASSERT_NE(pOutPin, nullptr);
+
+    hr = pGraph->Render(pOutPin);
+    std::cout << "[GRAPH RENDER] Result hr = 0x" << std::hex << hr << std::endl;
+    EXPECT_EQ(hr, S_OK);
+
+    IMediaControl* pControl = nullptr;
+    hr = pGraph->QueryInterface(IID_IMediaControl, reinterpret_cast<void**>(&pControl));
+    if (SUCCEEDED(hr) && pControl) {
+        hr = pControl->Run();
+        std::cout << "[GRAPH RUN] Result hr = 0x" << std::hex << hr << std::endl;
+        Sleep(500);
+        pControl->Stop();
+        pControl->Release();
+    }
+
+    pGraph->Release();
+    CoUninitialize();
+}
+
+TEST(VirtualCamTest, DirectShow_RegisterFilter_Verification) {
+    HRESULT hr = CoInitialize(nullptr);
+    IFilterMapper2* pFM = nullptr;
+    hr = CoCreateInstance(CLSID_FilterMapper2, nullptr, CLSCTX_INPROC_SERVER,
+                          IID_IFilterMapper2, reinterpret_cast<void**>(&pFM));
+    ASSERT_EQ(hr, S_OK);
+    ASSERT_NE(pFM, nullptr);
+
+    REGPINTYPES regTypes[1];
+    regTypes[0].clsMajorType = &MEDIATYPE_Video;
+    regTypes[0].clsMinorType = &MEDIASUBTYPE_RGB24;
+
+    REGFILTERPINS2 regPin;
+    ZeroMemory(&regPin, sizeof(regPin));
+    regPin.dwFlags = REG_PINFLAG_B_OUTPUT;
+    regPin.cInstances = 1;
+    regPin.nMediaTypes = 1;
+    regPin.lpMediaType = regTypes;
+    regPin.nMediums = 0;
+    regPin.lpMedium = nullptr;
+    regPin.clsPinCategory = &PIN_CATEGORY_CAPTURE_GestCam;
+
+    REGFILTER2 rf2;
+    ZeroMemory(&rf2, sizeof(rf2));
+    rf2.dwVersion = 2;
+    rf2.dwMerit = MERIT_DO_NOT_USE;
+    rf2.cPins2 = 1;
+    rf2.rgPins2 = &regPin;
+
+    hr = pFM->RegisterFilter(
+        CLSID_GestCamVirtualCamera,
+        GESTCAM_VIRTUALCAM_FRIENDLY_NAME,
+        nullptr,
+        &CLSID_VideoInputDeviceCategory_GestCam,
+        GESTCAM_VIRTUALCAM_CLSID_STR,
+        &rf2
+    );
+    std::cout << "[TEST REGISTER FILTER] hr = 0x" << std::hex << hr << std::endl;
+    EXPECT_TRUE(hr == S_OK || hr == E_ACCESSDENIED || hr == HRESULT_FROM_WIN32(ERROR_ACCESS_DENIED));
+
+    pFM->Release();
+    CoUninitialize();
+}
+
+

@@ -52,7 +52,7 @@ void ColorConverter::NV12_to_RGB24_Scalar(const uint8_t* nv12, uint8_t* rgb, int
             int u_val = uv_row[uv_idx];
             int v_val = uv_row[uv_idx + 1];
 
-            YUV2RGB(y_val, u_val, v_val, rgb_row[x * 3], rgb_row[x * 3 + 1], rgb_row[x * 3 + 2]);
+            YUV2RGB(y_val, u_val, v_val, rgb_row[x * 3 + 2], rgb_row[x * 3 + 1], rgb_row[x * 3]);
         }
     }
 }
@@ -120,11 +120,12 @@ void ColorConverter::NV12_to_RGB24_AVX2(const uint8_t* nv12, uint8_t* rgb, int w
             _mm256_storeu_si256(reinterpret_cast<__m256i*>(g_arr), g16);
             _mm256_storeu_si256(reinterpret_cast<__m256i*>(b_arr), b16);
 
+            // Windows DIB MEDIASUBTYPE_RGB24 expects B, G, R byte order
             for (int k = 0; k < 16; ++k) {
                 int px = (x + k) * 3;
-                rgb_row[px]     = ClampByte(r_arr[k]);
-                rgb_row[px + 1] = ClampByte(g_arr[k]);
-                rgb_row[px + 2] = ClampByte(b_arr[k]);
+                rgb_row[px]     = ClampByte(b_arr[k]); // B
+                rgb_row[px + 1] = ClampByte(g_arr[k]); // G
+                rgb_row[px + 2] = ClampByte(r_arr[k]); // R
             }
         }
 
@@ -133,7 +134,7 @@ void ColorConverter::NV12_to_RGB24_AVX2(const uint8_t* nv12, uint8_t* rgb, int w
             int uv_idx = (x / 2) * 2;
             int u_val = uv_row[uv_idx];
             int v_val = uv_row[uv_idx + 1];
-            YUV2RGB(y_val, u_val, v_val, rgb_row[x * 3], rgb_row[x * 3 + 1], rgb_row[x * 3 + 2]);
+            YUV2RGB(y_val, u_val, v_val, rgb_row[x * 3 + 2], rgb_row[x * 3 + 1], rgb_row[x * 3]);
         }
     }
 #else
@@ -154,8 +155,8 @@ void ColorConverter::YUY2_to_RGB24_Scalar(const uint8_t* yuy2, uint8_t* rgb, int
             int y1 = yuy2_row[x * 2 + 2];
             int v  = yuy2_row[x * 2 + 3];
 
-            YUV2RGB(y0, u, v, rgb_row[x * 3], rgb_row[x * 3 + 1], rgb_row[x * 3 + 2]);
-            YUV2RGB(y1, u, v, rgb_row[(x + 1) * 3], rgb_row[(x + 1) * 3 + 1], rgb_row[(x + 1) * 3 + 2]);
+            YUV2RGB(y0, u, v, rgb_row[x * 3 + 2], rgb_row[x * 3 + 1], rgb_row[x * 3]);
+            YUV2RGB(y1, u, v, rgb_row[(x + 1) * 3 + 2], rgb_row[(x + 1) * 3 + 1], rgb_row[(x + 1) * 3]);
         }
     }
 }
@@ -224,11 +225,12 @@ void ColorConverter::YUY2_to_RGB24_AVX2(const uint8_t* yuy2, uint8_t* rgb, int w
             _mm256_storeu_si256(reinterpret_cast<__m256i*>(g_arr), g16);
             _mm256_storeu_si256(reinterpret_cast<__m256i*>(b_arr), b16);
 
+            // Windows DIB MEDIASUBTYPE_RGB24 expects B, G, R byte order
             for (int k = 0; k < 16; ++k) {
                 int px = (x + k) * 3;
-                rgb_row[px]     = ClampByte(r_arr[k]);
-                rgb_row[px + 1] = ClampByte(g_arr[k]);
-                rgb_row[px + 2] = ClampByte(b_arr[k]);
+                rgb_row[px]     = ClampByte(b_arr[k]); // B
+                rgb_row[px + 1] = ClampByte(g_arr[k]); // G
+                rgb_row[px + 2] = ClampByte(r_arr[k]); // R
             }
         }
 
@@ -238,8 +240,8 @@ void ColorConverter::YUY2_to_RGB24_AVX2(const uint8_t* yuy2, uint8_t* rgb, int w
             int y1 = yuy2_row[x * 2 + 2];
             int v  = yuy2_row[x * 2 + 3];
 
-            YUV2RGB(y0, u, v, rgb_row[x * 3], rgb_row[x * 3 + 1], rgb_row[x * 3 + 2]);
-            YUV2RGB(y1, u, v, rgb_row[(x + 1) * 3], rgb_row[(x + 1) * 3 + 1], rgb_row[(x + 1) * 3 + 2]);
+            YUV2RGB(y0, u, v, rgb_row[x * 3 + 2], rgb_row[x * 3 + 1], rgb_row[x * 3]);
+            YUV2RGB(y1, u, v, rgb_row[(x + 1) * 3 + 2], rgb_row[(x + 1) * 3 + 1], rgb_row[(x + 1) * 3]);
         }
     }
 #else

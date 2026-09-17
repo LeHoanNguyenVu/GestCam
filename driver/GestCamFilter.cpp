@@ -101,10 +101,19 @@ STDMETHODIMP GestCamFilter::QueryInterface(REFIID riid, void** ppv) {
         *ppv = static_cast<IBaseFilter*>(this);
         AddRef();
         return S_OK;
+    } else if (riid == IID_IAMFilterMiscFlags) {
+        *ppv = static_cast<IAMFilterMiscFlags*>(this);
+        AddRef();
+        return S_OK;
     }
     *ppv = nullptr;
     return E_NOINTERFACE;
 }
+
+STDMETHODIMP_(ULONG) GestCamFilter::GetMiscFlags() {
+    return AM_FILTER_MISC_FLAGS_IS_SOURCE;
+}
+
 
 STDMETHODIMP_(ULONG) GestCamFilter::AddRef() {
     return ++ref_count_;

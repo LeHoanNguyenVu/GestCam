@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head><title>Camera Test</title></head>
+<body>
+<h1>Testing Cameras</h1>
+<div id="output"></div>
+<script>
+async function test() {
+    const out = document.getElementById('output');
+    try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        out.innerHTML += `<p>Found ${videoDevices.length} video device(s):</p><ul>`;
+        for (const d of videoDevices) {
+            out.innerHTML += `<li><b>${d.label || '(unlabeled)'}</b> (ID: ${d.deviceId})</li>`;
+        }
+        out.innerHTML += `</ul>`;
+        
+        for (const d of videoDevices) {
+            out.innerHTML += `<h3>Testing device: ${d.label}</h3>`;
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { deviceId: { exact: d.deviceId } }
+                });
+                out.innerHTML += `<p style="color:green">SUCCESS opening ${d.label}!</p>`;
+                stream.getTracks().forEach(t => t.stop());
+            } catch (err) {
+                out.innerHTML += `<p style="color:red">FAILED opening ${d.label}: ${err.name} - ${err.message}</p>`;
+            }
+        }
+    } catch (e) {
+        out.innerHTML += `<p style="color:red">Error: ${e.name} - ${e.message}</p>`;
+    }
+}
+test();
+</script>
+</body>
+</html>

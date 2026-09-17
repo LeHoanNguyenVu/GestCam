@@ -6,6 +6,7 @@
 #include <iostream>
 #include <chrono>
 #include <cstring>
+#include <vector>
 
 namespace gestcam::driver {
 
@@ -20,6 +21,20 @@ void DeleteMediaType(AM_MEDIA_TYPE* pmt) {
         pmt->pUnk->Release();
         pmt->pUnk = nullptr;
     }
+}
+
+HRESULT CopyMediaType(AM_MEDIA_TYPE* pDest, const AM_MEDIA_TYPE* pSrc) {
+    if (!pDest || !pSrc) return E_POINTER;
+    *pDest = *pSrc;
+    if (pSrc->cbFormat != 0 && pSrc->pbFormat != nullptr) {
+        pDest->pbFormat = reinterpret_cast<BYTE*>(CoTaskMemAlloc(pSrc->cbFormat));
+        if (!pDest->pbFormat) return E_OUTOFMEMORY;
+        std::memcpy(pDest->pbFormat, pSrc->pbFormat, pSrc->cbFormat);
+    }
+    if (pDest->pUnk != nullptr) {
+        pDest->pUnk->AddRef();
+    }
+    return S_OK;
 }
 
 HRESULT CreateDefaultMediaType(AM_MEDIA_TYPE* pmt) {
@@ -174,8 +189,9 @@ STDMETHODIMP GestCamStream::Connect(IPin* pReceivePin, const AM_MEDIA_TYPE* pmt)
     if (connected_pin_) return VFW_E_ALREADY_CONNECTED;
 
     AM_MEDIA_TYPE mt;
+    ZeroMemory(&mt, sizeof(AM_MEDIA_TYPE));
     if (pmt) {
-        mt = *pmt;
+        CopyMediaType(&mt, pmt);
     } else {
         CreateDefaultMediaType(&mt);
     }
@@ -185,8 +201,39 @@ STDMETHODIMP GestCamStream::Connect(IPin* pReceivePin, const AM_MEDIA_TYPE* pmt)
         connected_pin_ = pReceivePin;
         connected_pin_->AddRef();
         DeleteMediaType(&current_media_type_);
-        current_media_type_ = mt;
+        CopyMediaType(&current_media_type_, &mt);
+
+        // Negotiate allocator with downstream input pin
+        IMemInputPin* pMemInput = nullptr;
+        if (SUCCEEDED(pReceivePin->QueryInterface(IID_IMemInputPin, reinterpret_cast<void**>(&pMemInput))) && pMemInput) {
+            IMemAllocator* pAlloc = nullptr;
+            hr = pMemInput->GetAllocator(&pAlloc);
+            if (FAILED(hr) || !pAlloc) {
+                hr = CoCreateInstance(CLSID_MemoryAllocator, nullptr, CLSCTX_INPROC_SERVER,
+                                      IID_IMemAllocator, reinterpret_cast<void**>(&pAlloc));
+            }
+
+            if (SUCCEEDED(hr) && pAlloc) {
+                ALLOCATOR_PROPERTIES prop = {};
+                prop.cBuffers = 4; // 4 buffers for WebRTC elasticity
+                prop.cbBuffer = GESTCAM_SLOT_SIZE;
+                prop.cbAlign = 1;
+                prop.cbPrefix = 0;
+
+                ALLOCATOR_PROPERTIES actual = {};
+                pMemInput->GetAllocatorRequirements(&prop);
+                pAlloc->SetProperties(&prop, &actual);
+                pMemInput->NotifyAllocator(pAlloc, FALSE);
+
+                if (allocator_) {
+                    allocator_->Release();
+                }
+                allocator_ = pAlloc;
+            }
+            pMemInput->Release();
+        }
     }
+    DeleteMediaType(&mt);
     return hr;
 }
 
@@ -219,8 +266,7 @@ STDMETHODIMP GestCamStream::ConnectedTo(IPin** pPin) {
 STDMETHODIMP GestCamStream::ConnectionMediaType(AM_MEDIA_TYPE* pmt) {
     if (!pmt) return E_POINTER;
     if (!connected_pin_) return VFW_E_NOT_CONNECTED;
-    CreateDefaultMediaType(pmt);
-    return S_OK;
+    return CopyMediaType(pmt, &current_media_type_);
 }
 
 STDMETHODIMP GestCamStream::QueryPinInfo(PIN_INFO* pInfo) {
@@ -279,7 +325,9 @@ STDMETHODIMP GestCamStream::Set(REFGUID, ULONG, LPVOID, ULONG, LPVOID, ULONG) {
 }
 
 STDMETHODIMP GestCamStream::Get(REFGUID rguidPropSet, ULONG ulId, LPVOID, ULONG, LPVOID pPropertyData, ULONG ulDataLength, ULONG* pBytesReturned) {
-    if (rguidPropSet == AMPROPSETID_Pin || rguidPropSet == AMPROPSETID_Pin_GestCam) {
+    if (rguidPropSet == AMPROPSETID_Pin || 
+        rguidPropSet == AMPROPSETID_Pin_Standard || 
+        rguidPropSet == AMPROPSETID_Pin_GestCam) {
         if (ulId == 0 /* AMPROPERTY_PIN_CATEGORY */) {
             if (!pPropertyData) {
                 if (pBytesReturned) *pBytesReturned = sizeof(GUID);
@@ -295,7 +343,9 @@ STDMETHODIMP GestCamStream::Get(REFGUID rguidPropSet, ULONG ulId, LPVOID, ULONG,
 }
 
 STDMETHODIMP GestCamStream::QuerySupported(REFGUID rguidPropSet, ULONG ulId, ULONG* pTypeSupport) {
-    if (rguidPropSet == AMPROPSETID_Pin || rguidPropSet == AMPROPSETID_Pin_GestCam) {
+    if (rguidPropSet == AMPROPSETID_Pin || 
+        rguidPropSet == AMPROPSETID_Pin_Standard || 
+        rguidPropSet == AMPROPSETID_Pin_GestCam) {
         if (ulId == 0 /* AMPROPERTY_PIN_CATEGORY */) {
             if (pTypeSupport) *pTypeSupport = KSPROPERTY_SUPPORT_GET;
             return S_OK;
@@ -312,8 +362,7 @@ STDMETHODIMP GestCamStream::SetFormat(AM_MEDIA_TYPE* pmt) {
     if (!pmt) return E_POINTER;
     if (QueryAccept(pmt) != S_OK) return VFW_E_INVALIDMEDIATYPE;
     DeleteMediaType(&current_media_type_);
-    current_media_type_ = *pmt;
-    return S_OK;
+    return CopyMediaType(&current_media_type_, pmt);
 }
 
 STDMETHODIMP GestCamStream::GetFormat(AM_MEDIA_TYPE** ppmt) {
@@ -374,8 +423,40 @@ void GestCamStream::CopyFlippedRGB24(const uint8_t* src, uint8_t* dst, int width
     }
 }
 
+
 HRESULT GestCamStream::Active() {
     if (is_streaming_) return S_OK;
+
+    // Fallback: If allocator wasn't negotiated during Connect, negotiate now
+    if (connected_pin_ && !allocator_) {
+        IMemInputPin* pMemInput = nullptr;
+        if (SUCCEEDED(connected_pin_->QueryInterface(IID_IMemInputPin, reinterpret_cast<void**>(&pMemInput))) && pMemInput) {
+            IMemAllocator* pAlloc = nullptr;
+            HRESULT hr = pMemInput->GetAllocator(&pAlloc);
+            if (FAILED(hr) || !pAlloc) {
+                hr = CoCreateInstance(CLSID_MemoryAllocator, nullptr, CLSCTX_INPROC_SERVER,
+                                      IID_IMemAllocator, reinterpret_cast<void**>(&pAlloc));
+            }
+            if (SUCCEEDED(hr) && pAlloc) {
+                ALLOCATOR_PROPERTIES prop = {};
+                prop.cBuffers = 4; // 4 buffers for elasticity
+                prop.cbBuffer = GESTCAM_SLOT_SIZE;
+                prop.cbAlign = 1;
+                prop.cbPrefix = 0;
+                ALLOCATOR_PROPERTIES actual = {};
+                pMemInput->GetAllocatorRequirements(&prop);
+                pAlloc->SetProperties(&prop, &actual);
+                pMemInput->NotifyAllocator(pAlloc, FALSE);
+                allocator_ = pAlloc;
+            }
+            pMemInput->Release();
+        }
+    }
+
+    if (allocator_) {
+        allocator_->Commit();
+    }
+
     is_streaming_ = true;
     worker_thread_ = std::thread(&GestCamStream::ThreadProc, this);
     return S_OK;
@@ -384,6 +465,14 @@ HRESULT GestCamStream::Active() {
 HRESULT GestCamStream::Inactive() {
     if (!is_streaming_) return S_OK;
     is_streaming_ = false;
+
+    // DirectShow mandatory rule: Decommit allocator BEFORE waiting for worker thread!
+    // Decommit immediately unblocks any thread waiting in allocator_->GetBuffer(),
+    // allowing ThreadProc to exit cleanly and avoid deadlocking the filter graph.
+    if (allocator_) {
+        allocator_->Decommit();
+    }
+
     if (worker_thread_.joinable()) {
         worker_thread_.join();
     }
@@ -414,12 +503,10 @@ bool GestCamStream::ReadFrameForTest(uint8_t* out_buffer, bool& out_is_fallback)
 }
 
 void GestCamStream::ThreadProc() {
-    // Open shared memory channel
+    // Attempt initial open of shared memory channel
     shm_consumer_.Open(GESTCAM_DEFAULT_SHM_NAME);
 
     std::vector<uint8_t> raw_rgb(GESTCAM_SLOT_SIZE);
-    REFERENCE_TIME stream_time = 0;
-    constexpr REFERENCE_TIME FRAME_DURATION = 333333; // 30 FPS
 
     IMemInputPin* mem_input = nullptr;
     if (connected_pin_) {
@@ -428,6 +515,17 @@ void GestCamStream::ThreadProc() {
 
     while (is_streaming_.load(std::memory_order_relaxed)) {
         auto loop_start = std::chrono::steady_clock::now();
+
+        // Live capture source rule: Only deliver samples when filter graph is in State_Running
+        if (filter_ && filter_->GetCurrentFilterState() != State_Running) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        // Dynamically reconnect if GestCam Core started after camera opened
+        if (!shm_consumer_.IsConnected()) {
+            shm_consumer_.Open(GESTCAM_DEFAULT_SHM_NAME);
+        }
 
         uint64_t frame_index = 0;
         uint64_t timestamp_us = 0;
@@ -453,19 +551,28 @@ void GestCamStream::ThreadProc() {
                         RenderFallbackFrame(pData, GESTCAM_WIDTH, GESTCAM_HEIGHT, ++frame_tick_);
                     }
 
-                    REFERENCE_TIME rtStart = stream_time;
-                    REFERENCE_TIME rtEnd = stream_time + FRAME_DURATION;
-                    pSample->SetTime(&rtStart, &rtEnd);
+                    // For live capture streams, leave sample timestamps unset (nullptr)
+                    // so Chromium's SinkInputPin automatically assigns real-time system clock timestamps (TimeTicks::Now())
+                    pSample->SetTime(nullptr, nullptr);
                     pSample->SetSyncPoint(TRUE);
                     pSample->SetActualDataLength(GESTCAM_SLOT_SIZE);
 
-                    mem_input->Receive(pSample);
+                    HRESULT hr_rx = mem_input->Receive(pSample);
+                    if (hr_rx == S_FALSE || FAILED(hr_rx)) {
+                        pSample->Release();
+                        if (!is_streaming_.load(std::memory_order_relaxed)) {
+                            break;
+                        }
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                        continue;
+                    }
                 }
                 pSample->Release();
+            } else if (hr == VFW_E_NOT_COMMITTED || !is_streaming_.load(std::memory_order_relaxed)) {
+                // Allocator was decommitted by Inactive() - exit cleanly
+                break;
             }
         }
-
-        stream_time += FRAME_DURATION;
 
         // Pacing at 30 FPS (~33 ms per frame)
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(

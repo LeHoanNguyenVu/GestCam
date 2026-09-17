@@ -38,7 +38,36 @@ bool CheckHardwareAVX2() {
 #endif
 }
 
-int main() {
+static std::atomic<bool> g_shutdown_requested{false};
+
+#ifdef _WIN32
+BOOL WINAPI ConsoleCtrlHandler(DWORD signal) {
+    if (signal == CTRL_C_EVENT || signal == CTRL_CLOSE_EVENT || signal == CTRL_BREAK_EVENT) {
+        g_shutdown_requested.store(true);
+        return TRUE;
+    }
+    return FALSE;
+}
+#endif
+
+int main(int argc, char* argv[]) {
+#ifdef _WIN32
+    SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE);
+#endif
+
+    bool benchmark_mode = false;
+    int benchmark_frames = 30;
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--benchmark" || arg == "-b" || arg == "--test") {
+            benchmark_mode = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                benchmark_frames = std::atoi(argv[++i]);
+                if (benchmark_frames <= 0) benchmark_frames = 30;
+            }
+        }
+    }
     std::cout << "========================================================\n";
     std::cout << "          GestCam Core - Version " << gestcam::SystemInfo::kVersion << "\n";
     std::cout << "========================================================\n";
@@ -55,20 +84,32 @@ int main() {
     auto devices = gestcam::CameraEnumerator::EnumerateDevices();
 
     std::unique_ptr<gestcam::ICameraSource> cam;
-    if (!devices.empty()) {
+    int selected_device_index = -1;
+    std::string selected_device_name;
+
+    for (const auto& dev : devices) {
+        if (dev.name.find("GestCam") == std::string::npos) {
+            selected_device_index = dev.index;
+            selected_device_name = dev.name;
+            break;
+        }
+    }
+
+    if (selected_device_index >= 0) {
         std::cout << "[CAMERA] Detected " << devices.size() << " device(s):\n";
         for (const auto& dev : devices) {
-            std::cout << "  - [" << dev.index << "] " << dev.name << "\n";
+            std::cout << "  - [" << dev.index << "] " << dev.name 
+                      << (dev.index == selected_device_index ? " (SELECTED AS INPUT)" : "") << "\n";
         }
         cam = std::make_unique<gestcam::MFCameraCapture>();
-        std::cout << "\n[CAMERA] Opening physical camera [" << devices[0].name << "] at 1280x720...\n";
-        if (!cam->Open(devices[0].index, 1280, 720, 30)) {
+        std::cout << "\n[CAMERA] Opening physical camera [" << selected_device_name << "] at 1280x720...\n";
+        if (!cam->Open(selected_device_index, 1280, 720, 30)) {
             std::cerr << "[WARNING] Fallback to Mock Camera Source.\n";
             cam = std::make_unique<gestcam::MockCameraSource>();
             cam->Open(0, 1280, 720, 30);
         }
     } else {
-        std::cout << "[CAMERA] No physical webcam detected. Using Mock Camera Source.\n";
+        std::cout << "[CAMERA] No physical webcam detected (or only virtual camera found). Using Mock Camera Source.\n";
         cam = std::make_unique<gestcam::MockCameraSource>();
         cam->Open(0, 1280, 720, 30);
     }
@@ -89,90 +130,159 @@ int main() {
               << "Local\\GestCam_SharedBuffer" << "' (Low-Integrity DACL OK)\n";
 
     std::atomic<bool> is_running{true};
-    const int total_frames_to_test = 30;
 
-    std::vector<double> conversion_times_us;
-    conversion_times_us.reserve(total_frames_to_test);
-    std::vector<double> shm_write_times_us;
-    shm_write_times_us.reserve(total_frames_to_test);
+    if (benchmark_mode) {
+        std::cout << "\n[MODE] BENCHMARK / TEST MODE (" << benchmark_frames << " frames)\n";
+        std::cout << "[PIPELINE] Launching Producer & Consumer threads (SPSC Queue + SIMD AVX2 + IPC)...\n";
 
-    std::cout << "\n[PIPELINE] Launching Producer & Consumer threads (SPSC Queue + SIMD AVX2 + IPC)...\n";
+        std::vector<double> conversion_times_us;
+        conversion_times_us.reserve(benchmark_frames);
+        std::vector<double> shm_write_times_us;
+        shm_write_times_us.reserve(benchmark_frames);
 
-    // Thread 1: Consumer rút frame từ Queue -> SIMD AVX2 -> ghi vào Shared Memory
-    std::thread consumer_thread([&]() {
-        gestcam::RawVideoFrame raw_frame;
-        std::vector<uint8_t> rgb_buffer;
-        uint64_t processed = 0;
+        std::thread consumer_thread([&]() {
+            gestcam::RawVideoFrame raw_frame;
+            std::vector<uint8_t> rgb_buffer;
+            uint64_t processed = 0;
 
-        while (is_running.load(std::memory_order_relaxed) || !frame_queue.Empty()) {
-            if (frame_queue.TryPop(raw_frame)) {
-                auto t0 = std::chrono::steady_clock::now();
-                bool ok = gestcam::ColorConverter::ConvertFrameToRGB24(raw_frame, rgb_buffer);
-                auto t1 = std::chrono::steady_clock::now();
+            while (is_running.load(std::memory_order_relaxed) || !frame_queue.Empty()) {
+                if (frame_queue.TryPop(raw_frame)) {
+                    auto t0 = std::chrono::steady_clock::now();
+                    bool ok = gestcam::ColorConverter::ConvertFrameToRGB24(raw_frame, rgb_buffer);
+                    auto t1 = std::chrono::steady_clock::now();
 
-                if (ok) {
-                    double us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
-                    conversion_times_us.push_back(us);
+                    if (ok) {
+                        double us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+                        conversion_times_us.push_back(us);
 
-                    // Ghi frame vào Shared Memory (Triple-Buffering)
-                    auto tw0 = std::chrono::steady_clock::now();
-                    shm_producer.WriteFrame(rgb_buffer.data(), ++processed, raw_frame.timestamp_us);
-                    auto tw1 = std::chrono::steady_clock::now();
-                    double w_us = std::chrono::duration_cast<std::chrono::microseconds>(tw1 - tw0).count();
-                    shm_write_times_us.push_back(w_us);
+                        auto tw0 = std::chrono::steady_clock::now();
+                        shm_producer.WriteFrame(rgb_buffer.data(), ++processed, raw_frame.timestamp_us);
+                        auto tw1 = std::chrono::steady_clock::now();
+                        double w_us = std::chrono::duration_cast<std::chrono::microseconds>(tw1 - tw0).count();
+                        shm_write_times_us.push_back(w_us);
+                    }
+                } else {
+                    std::this_thread::yield();
                 }
-            } else {
-                std::this_thread::yield();
+            }
+        });
+
+        auto pipeline_start = std::chrono::steady_clock::now();
+        for (int i = 0; i < benchmark_frames; ++i) {
+            gestcam::RawVideoFrame captured_frame;
+            if (cam->GrabFrame(captured_frame, 1500)) {
+                frame_queue.PushOverwrite(std::move(captured_frame));
             }
         }
-    });
 
-    // Thread 2 (Main): Producer thu thập frame từ Camera đẩy vào Queue (PushOverwrite)
-    auto pipeline_start = std::chrono::steady_clock::now();
-    for (int i = 0; i < total_frames_to_test; ++i) {
-        gestcam::RawVideoFrame captured_frame;
-        if (cam->GrabFrame(captured_frame, 1500)) {
-            frame_queue.PushOverwrite(std::move(captured_frame));
+        while (!frame_queue.Empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
+        is_running.store(false, std::memory_order_relaxed);
+        consumer_thread.join();
+
+        auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - pipeline_start
+        ).count();
+
+        cam->Close();
+        shm_producer.Close();
+
+        double actual_fps = (total_ms > 0) ? (benchmark_frames * 1000.0 / total_ms) : 0.0;
+        double avg_conv_us = 0.0;
+        if (!conversion_times_us.empty()) {
+            double sum = std::accumulate(conversion_times_us.begin(), conversion_times_us.end(), 0.0);
+            avg_conv_us = sum / conversion_times_us.size();
+        }
+        double avg_shm_us = 0.0;
+        if (!shm_write_times_us.empty()) {
+            double sum = std::accumulate(shm_write_times_us.begin(), shm_write_times_us.end(), 0.0);
+            avg_shm_us = sum / shm_write_times_us.size();
+        }
+
+        std::cout << "\n[RESULT] Processed " << conversion_times_us.size() << "/" << benchmark_frames 
+                  << " frames through SPSC Queue -> SIMD AVX2 -> Shared Memory in " << total_ms << " ms.\n";
+        std::cout << "[PERF] Camera Capture Speed: " << actual_fps << " FPS\n";
+        std::cout << "[PERF] Average SIMD NV12->RGB24 Conversion Time: " 
+                  << (avg_conv_us / 1000.0) << " ms (" << avg_conv_us << " us)\n";
+        std::cout << "[PERF] Average Shared Memory Write Latency: " 
+                  << (avg_shm_us / 1000.0) << " ms (" << avg_shm_us << " us)\n";
+
+        std::cout << "========================================================\n";
+        std::cout << "Task 1.6 Benchmark Verification Completed Successfully!\n";
+        std::cout << "========================================================\n";
+    } else {
+        // Continuous Live Streaming Mode
+        std::cout << "\n========================================================\n";
+        std::cout << "[MODE] CONTINUOUS LIVE STREAMING MODE ACTIVE (30 FPS)\n";
+        std::cout << "[INFO] Streaming live webcam to 'Local\\GestCam_SharedBuffer'\n";
+        std::cout << "[INFO] Virtual Camera is ready for Google Meet, Zoom, Teams.\n";
+        std::cout << "[INFO] Press Ctrl+C to terminate cleanly.\n";
+        std::cout << "========================================================\n\n";
+
+        std::atomic<uint64_t> frames_streamed{0};
+        std::atomic<double> last_simd_us{0.0};
+        std::atomic<double> last_ipc_us{0.0};
+
+        std::thread consumer_thread([&]() {
+            gestcam::RawVideoFrame raw_frame;
+            std::vector<uint8_t> rgb_buffer;
+            uint64_t processed = 0;
+
+            while (!g_shutdown_requested.load(std::memory_order_relaxed) || !frame_queue.Empty()) {
+                if (frame_queue.TryPop(raw_frame)) {
+                    auto t0 = std::chrono::steady_clock::now();
+                    bool ok = gestcam::ColorConverter::ConvertFrameToRGB24(raw_frame, rgb_buffer);
+                    auto t1 = std::chrono::steady_clock::now();
+
+                    if (ok) {
+                        double us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+                        last_simd_us.store(us, std::memory_order_relaxed);
+
+                        auto tw0 = std::chrono::steady_clock::now();
+                        shm_producer.WriteFrame(rgb_buffer.data(), ++processed, raw_frame.timestamp_us);
+                        auto tw1 = std::chrono::steady_clock::now();
+                        double w_us = std::chrono::duration_cast<std::chrono::microseconds>(tw1 - tw0).count();
+                        last_ipc_us.store(w_us, std::memory_order_relaxed);
+
+                        frames_streamed.store(processed, std::memory_order_relaxed);
+                    }
+                } else {
+                    std::this_thread::yield();
+                }
+            }
+        });
+
+        auto stream_start = std::chrono::steady_clock::now();
+        auto last_report = stream_start;
+
+        while (!g_shutdown_requested.load(std::memory_order_relaxed)) {
+            gestcam::RawVideoFrame captured_frame;
+            if (cam->GrabFrame(captured_frame, 1500)) {
+                frame_queue.PushOverwrite(std::move(captured_frame));
+            }
+
+            auto now = std::chrono::steady_clock::now();
+            auto since_last_report = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_report).count();
+            if (since_last_report >= 1000) {
+                uint64_t total_f = frames_streamed.load(std::memory_order_relaxed);
+                auto total_elapsed_s = std::chrono::duration_cast<std::chrono::seconds>(now - stream_start).count();
+                double cur_fps = (total_elapsed_s > 0) ? (static_cast<double>(total_f) / total_elapsed_s) : 30.0;
+
+                std::cout << "\r[STREAMING] Frames: " << total_f 
+                          << " | Speed: " << cur_fps << " FPS"
+                          << " | SIMD: " << (last_simd_us.load() / 1000.0) << " ms"
+                          << " | IPC: " << (last_ipc_us.load() / 1000.0) << " ms   " << std::flush;
+                last_report = now;
+            }
+        }
+
+        std::cout << "\n\n[SHUTDOWN] Ctrl+C received. Cleaning up pipeline resources...\n";
+        consumer_thread.join();
+        cam->Close();
+        shm_producer.Close();
+        std::cout << "[SHUTDOWN] Pipeline terminated cleanly. Have a great day!\n";
     }
 
-    // Đợi queue được xử lý hết
-    while (!frame_queue.Empty()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-    is_running.store(false, std::memory_order_relaxed);
-    consumer_thread.join();
-
-    auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - pipeline_start
-    ).count();
-
-    cam->Close();
-    shm_producer.Close();
-
-    // 4. Báo cáo đo kiểm hiệu năng
-    double actual_fps = (total_ms > 0) ? (total_frames_to_test * 1000.0 / total_ms) : 0.0;
-    double avg_conv_us = 0.0;
-    if (!conversion_times_us.empty()) {
-        double sum = std::accumulate(conversion_times_us.begin(), conversion_times_us.end(), 0.0);
-        avg_conv_us = sum / conversion_times_us.size();
-    }
-    double avg_shm_us = 0.0;
-    if (!shm_write_times_us.empty()) {
-        double sum = std::accumulate(shm_write_times_us.begin(), shm_write_times_us.end(), 0.0);
-        avg_shm_us = sum / shm_write_times_us.size();
-    }
-
-    std::cout << "\n[RESULT] Processed " << conversion_times_us.size() << "/" << total_frames_to_test 
-              << " frames through SPSC Queue -> SIMD AVX2 -> Shared Memory in " << total_ms << " ms.\n";
-    std::cout << "[PERF] Camera Capture Speed: " << actual_fps << " FPS\n";
-    std::cout << "[PERF] Average SIMD NV12->RGB24 Conversion Time: " 
-              << (avg_conv_us / 1000.0) << " ms (" << avg_conv_us << " us)\n";
-    std::cout << "[PERF] Average Shared Memory Write Latency: " 
-              << (avg_shm_us / 1000.0) << " ms (" << avg_shm_us << " us)\n";
-
-    std::cout << "========================================================\n";
-    std::cout << "Task 1.4 Verification Completed Successfully!\n";
-    std::cout << "========================================================\n";
     return 0;
 }

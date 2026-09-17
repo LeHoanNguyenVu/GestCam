@@ -88,5 +88,6 @@ private:
 // Helper: Free an AM_MEDIA_TYPE structure
 void DeleteMediaType(AM_MEDIA_TYPE* pmt);
 HRESULT CreateDefaultMediaType(AM_MEDIA_TYPE* pmt);
+HRESULT CopyMediaType(AM_MEDIA_TYPE* pDest, const AM_MEDIA_TYPE* pSrc);
 
 } // namespace gestcam::driver

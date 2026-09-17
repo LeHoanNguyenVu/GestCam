@@ -15,10 +15,15 @@ DEFINE_GUID(CLSID_VideoInputDeviceCategory_GestCam,
 DEFINE_GUID(PIN_CATEGORY_CAPTURE_GestCam,
     0xfb6c4281, 0x0353, 0x11d1, 0x90, 0x5f, 0x00, 0x00, 0xc0, 0xcc, 0x16, 0xba);
 
-// Pin Property Set: {C6E13370-30AC-11CF-A18C-00AA0061CE92}
+// Pin Property Set: {9B00F101-1567-11D1-B3F1-00AA003761C5}
+DEFINE_GUID(AMPROPSETID_Pin_Standard,
+    0x9b00f101, 0x1567, 0x11d1, 0xb3, 0xf1, 0x00, 0xaa, 0x00, 0x37, 0x61, 0xc5);
+
+// Pin Property Set (Legacy alias): {C6E13370-30AC-11CF-A18C-00AA0061CE92}
 DEFINE_GUID(AMPROPSETID_Pin_GestCam,
     0xc6e13370, 0x30ac, 0x11cf, 0xa1, 0x8c, 0x00, 0xaa, 0x00, 0x61, 0xce, 0x92);
 
 constexpr const wchar_t* GESTCAM_VIRTUALCAM_FRIENDLY_NAME = L"GestCam Virtual Camera";
 constexpr const char* GESTCAM_VIRTUALCAM_FRIENDLY_NAME_A = "GestCam Virtual Camera";
 constexpr const wchar_t* GESTCAM_VIRTUALCAM_CLSID_STR = L"{9E38B6B2-225C-479D-86D2-959D960814B2}";
+

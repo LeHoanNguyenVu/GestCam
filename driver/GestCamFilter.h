@@ -10,7 +10,8 @@ namespace gestcam::driver {
 
 class GestCamStream;
 
-class GestCamFilter : public IBaseFilter {
+class GestCamFilter : public IBaseFilter,
+                      public IAMFilterMiscFlags {
 public:
     GestCamFilter();
     virtual ~GestCamFilter();
@@ -38,8 +39,12 @@ public:
     STDMETHODIMP JoinFilterGraph(IFilterGraph* pGraph, LPCWSTR pName) override;
     STDMETHODIMP QueryVendorInfo(LPWSTR* pVendorInfo) override;
 
+    // IAMFilterMiscFlags
+    STDMETHODIMP_(ULONG) GetMiscFlags() override;
+
     GestCamStream* GetStream() const { return pin_; }
     FILTER_STATE GetCurrentFilterState() const { return state_; }
+
 
 private:
     std::atomic<ULONG> ref_count_{1};
