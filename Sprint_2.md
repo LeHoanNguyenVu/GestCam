@@ -74,10 +74,10 @@ Dựa trên 21 điểm khớp tay 3D chuẩn hóa $[0.0, 1.0]$:
 
 ## 3. DANH SÁCH CÁC TÁC VỤ (TASKS BREAKDOWN)
 
-- [ ] **Task 2.1: Tải & Chuẩn bị Models ONNX INT8**
+- [x] **Task 2.1: Tải & Chuẩn bị Models ONNX INT8**
   - Download pre-trained ONNX models: UltraFace-320, BlazePalm, MediaPipe Hand Landmark.
   - Sử dụng công cụ ONNX Quantization tool (`onnxruntime.quantization`) lượng tử hóa sang INT8.
-  - Đảm bảo tổng dung lượng 3 file model cộng lại $\le 10\text{ MB}$.
+  - Đảm bảo tổng dung lượng 3 file model cộng lại $\le 10\text{ MB}$. (Đã hoàn thành: 5.52 MB)
 - [ ] **Task 2.2: Xây dựng Module ONNX Runtime DirectML Wrapper**
   - Viết class `OnnxDirectMLEngine`: Quản lý `Ort::Env`, `Ort::Session`, `Ort::IoBinding`.
   - Thiết lập cơ chế cấp phát bộ nhớ tensor cố định.
