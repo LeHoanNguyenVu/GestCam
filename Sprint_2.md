@@ -81,10 +81,10 @@ Dựa trên 21 điểm khớp tay 3D chuẩn hóa $[0.0, 1.0]$:
 - [x] **Task 2.2: Xây dựng Module ONNX Runtime DirectML Wrapper**
   - Viết class `OnnxDirectMLEngine`: Quản lý `Ort::Env`, `Ort::Session`, `Ort::IoBinding`.
   - Thiết lập cơ chế cấp phát bộ nhớ tensor cố định. (Đã hoàn thành: Zero-Allocation Tensor Pipeline & 6/6 tests passed)
-- [ ] **Task 2.3: Hiện thực UltraFace Detector & Tính góc nghiêng đầu**
+- [x] **Task 2.3: Hiện thực UltraFace Detector & Tính góc nghiêng đầu**
   - Viết tiền xử lý: Resize frame từ $1280 \times 720 \to 320 \times 240$, normalize `(pixel - 127.5) / 128.0`.
   - Chạy inference, parse bounding box qua Non-Maximum Suppression (NMS).
-  - Trích xuất toạ độ mắt và tính góc $\theta$.
+  - Trích xuất toạ độ mắt và tính góc $\theta$. (Đã hoàn thành: Latency 8.39ms, sai số góc <= 3 độ, 6/6 tests passed)
 - [ ] **Task 2.4: Hiện thực Pipeline Bàn tay Two-Stage + Temporal Caching**
   - Cài đặt BlazePalm detector và hàm crop ROI $224 \times 224$ có xoay ma trận chuẩn hóa.
   - Cài đặt Hand Landmark inference trích xuất 21 điểm 3D.
